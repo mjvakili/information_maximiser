@@ -28,7 +28,7 @@ class IMNN():
         #                               bool
         #                               float/int
         # hidden_layers(dict, class)    list      - checks that hidden layers can be built into a network
-        # initialise_variables()        21 Nones  - sets all other class variables to None
+        # initialise_variables()        23 Nones  - sets all other class variables to None
         #______________________________________________________________
         # VARIABLES
         # u                             class     - utility functions
@@ -64,6 +64,7 @@ class IMNN():
         # x_p                 setup() n tensor    - above fiducial simulation input tensor
         # dd                  setup() n tensor    - inverse difference between upper and lower parameter value
         # dropout             setup() n tensor    - keep rate for dropout layer
+        # ϕ                   setup() n tensor    - boolean phase for batch normalisation
         # output              setup() n tensor    - network output for simulations at fiducial parameter value
         # F                   setup() n tensor    - Fisher information matrix
         # MLE                 setup() n tensor    - MLE of parameters
@@ -96,7 +97,7 @@ class IMNN():
             n.bb = u.isfloat([parameters, 'bb'])
             n.activation, n.takes_α, n.α = u.activation(parameters)
             n.layers = u.hidden_layers(parameters, n)
-        n.sess, n.x, n.x_central, n.central_indices, n.derivative_indices, n.test_F, n.θ_fid, n.prior, n.x_m, n.x_p, n.dd, n.dropout, n.output, n.F, n.MLE, n.AL, n.backpropagate, n.μ, n.C, n.iC, n.dμdθ, n.saver = u.initialise_variables()
+        n.sess, n.x, n.x_central, n.central_indices, n.derivative_indices, n.test_F, n.θ_fid, n.prior, n.x_m, n.x_p, n.dd, n.dropout, n.ϕ, n.output, n.F, n.MLE, n.AL, n.backpropagate, n.μ, n.C, n.iC, n.dμdθ, n.saver = u.initialise_variables()
 
     def begin_session(n):
         # BEGIN TENSORFLOW SESSION AND INITIALISE PARAMETERS
@@ -168,6 +169,7 @@ class IMNN():
         # x_p                         n tensor    - above fiducial simulation input tensor
         # dd                          n tensor    - inverse difference between upper and lower parameter value
         # dropout                     n tensor    - keep rate for dropout layer
+        # ϕ                           n tensor    - boolean phase for batch normalisation
         # output                      n tensor    - network output for simulations at fiducial parameter value
         # F                           n tensor    - Fisher information matrix
         # C                           n tensor    - covariance of network outputs for fiducial simulations
@@ -194,6 +196,7 @@ class IMNN():
             n.prior = tf.get_default_graph().get_tensor_by_name("prior:0")
             n.dd = tf.get_default_graph().get_tensor_by_name("dd:0")
             n.dropout = tf.get_default_graph().get_tensor_by_name("dropout:0")
+            n.ϕ = tf.get_default_graph().get_tensor_by_name("phase:0")
             n.output = tf.get_default_graph().get_tensor_by_name("output:0")
             n.F = tf.get_default_graph().get_tensor_by_name("fisher_information:0")
             n.C = tf.get_default_graph().get_tensor_by_name("covariance:0")
@@ -299,7 +302,7 @@ class IMNN():
         else:
             return tf.nn.dropout(n.activation(conv), dropout, name = 'conv_' + str(l))
 
-    def build_network(n, input_tensor, dropout):
+    def build_network(n, input_tensor, dropout, ϕ):
         # AUTO BUILD NETWORK
         #______________________________________________________________
         # CALLED FROM (DEFINED IN IMNN.py)
@@ -316,6 +319,7 @@ class IMNN():
         # INPUTS
         # input_tensor                  tensor    - input tensor to the network
         # dropout                       tensor    - keep rate for dropout layer
+        # ϕ                             tensor    - phase for batch normalisation
         # verbose                     n bool      - True to print outputs such as shape of tensors
         # layers                      n list      - contains the neural architecture of the network
         #______________________________________________________________
@@ -564,6 +568,7 @@ class IMNN():
         # prior                       n tensor    - prior range for each parameter for calculating MLE
         # dd                          n tensor    - inverse difference between upper and lower parameter value
         # dropout                     n tensor    - keep rate for dropout layer
+        # ϕ                           n tensor    - boolean phase for batch normalisation
         # output                        tensor    - network output for simulations at fiducial parameter value
         # output                      n tensor    - network output for simulations at fiducial parameter value (named)
         # output_central                tensor    - network output for simulations at fiducial parameter value to calculate fisher
@@ -620,27 +625,28 @@ class IMNN():
         n.θ_fid = tf.constant(n.fiducial_θ, dtype = n._FLOATX, name = "fiducial")
         n.dd = tf.constant(n.derivative_denominator, dtype = n._FLOATX, name = "dd")
         n.dropout = tf.placeholder(n._FLOATX, shape = (), name = "dropout")
+        n.ϕ = tf.placeholder(tf.bool, shape = (), name = "phase")
         if n.prebuild:
             network = n.build_network
         utils.utils().to_prebuild(network)
         with tf.variable_scope("IMNN") as scope:
-            output = network(n.x, n.dropout)
+            output = network(n.x, n.dropout, False)
         n.output = tf.identity(output, name = "output")
         if n.verbose: print(n.output)
         with tf.variable_scope("IMNN") as scope:
             scope.reuse_variables()
-            output_central = network(central_input, n.dropout)
+            output_central = network(central_input, n.dropout, n.ϕ)
             scope.reuse_variables()
-            output_m = network(derivative_input_m, n.dropout)
+            output_m = network(derivative_input_m, n.dropout, n.ϕ)
             scope.reuse_variables()
-            output_p = network(derivative_input_p, n.dropout)
+            output_p = network(derivative_input_p, n.dropout, n.ϕ)
             if n.preload_data is not None and test_input is not None:
                 scope.reuse_variables()
-                test_output_central = network(test_input, 1.)
+                test_output_central = network(test_input, 1., False)
                 scope.reuse_variables()
-                test_output_m = network(test_derivative_input_m, 1.)
+                test_output_m = network(test_derivative_input_m, 1., False)
                 scope.reuse_variables()
-                test_output_p = network(test_derivative_input_p, 1.)
+                test_output_p = network(test_derivative_input_p, 1., False)
             else:
                 test_output_central = output_central
                 test_output_m = output_m
@@ -712,6 +718,7 @@ class IMNN():
         # x_m                         n tensor    - below fiducial simulation input tensor
         # x_p                         n tensor    - above fiducial simulation input tensor
         # dropout                     n tensor    - keep rate for dropout layer
+        # ϕ                           n tensor    - boolean phase for batch normalisation
         # F                           n tensor    - Fisher information matrix
         # test_F                      n tensor    - Fisher information matrix from test simulations
         # save_file                   n str/None  - Name to save or load graph. None does not save graph
@@ -747,17 +754,17 @@ class IMNN():
             np.random.shuffle(derivative_indices)
             if n.x_central.op.type != 'Placeholder':
                 for combination in range(n_train):
-                    n.sess.run(n.backpropagate, feed_dict = {n.central_indices: central_indices[combination * n.n_s: (combination + 1) * n.n_s].reshape((n.n_s, 1)), n.derivative_indices: derivative_indices[combination * n.n_p: (combination + 1) * n.n_p].reshape((n.n_p, 1)), n.dropout: keep_rate})
-                train_F.append(np.linalg.det(n.sess.run(n.F, feed_dict = {n.central_indices: central_indices[combination * n.n_s: (combination + 1) * n.n_s].reshape((n.n_s, 1)), n.derivative_indices: derivative_indices[combination * n.n_p: (combination + 1) * n.n_p].reshape((n.n_p, 1)), n.dropout: 1.})))
+                    n.sess.run(n.backpropagate, feed_dict = {n.central_indices: central_indices[combination * n.n_s: (combination + 1) * n.n_s].reshape((n.n_s, 1)), n.derivative_indices: derivative_indices[combination * n.n_p: (combination + 1) * n.n_p].reshape((n.n_p, 1)), n.dropout: keep_rate, n.ϕ: True})
+                train_F.append(np.linalg.det(n.sess.run(n.F, feed_dict = {n.central_indices: central_indices[combination * n.n_s: (combination + 1) * n.n_s].reshape((n.n_s, 1)), n.derivative_indices: derivative_indices[combination * n.n_p: (combination + 1) * n.n_p].reshape((n.n_p, 1)), n.dropout: 1., n.ϕ: False})))
             else:
                 for combination in range(n_train):
-                    n.sess.run(n.backpropagate, feed_dict = {n.x_central: data['x_central'][central_indices[combination * n.n_s: (combination + 1) * n.n_s]], n.x_m: data['x_m'][derivative_indices[combination * n.n_p: (combination + 1) * n.n_p]], n.x_p: data['x_p'][derivative_indices[combination * n.n_p: (combination + 1) * n.n_p]], n.dropout: keep_rate})
-                train_F.append(np.linalg.det(n.sess.run(n.F, feed_dict = {n.x_central: data['x_central'][central_indices[combination * n.n_s: (combination + 1) * n.n_s]], n.x_m: data['x_m'][derivative_indices[combination * n.n_p: (combination + 1) * n.n_p]], n.x_p: data['x_p'][derivative_indices[combination * n.n_p: (combination + 1) * n.n_p]], n.dropout: 1.})))
+                    n.sess.run(n.backpropagate, feed_dict = {n.x_central: data['x_central'][central_indices[combination * n.n_s: (combination + 1) * n.n_s]], n.x_m: data['x_m'][derivative_indices[combination * n.n_p: (combination + 1) * n.n_p]], n.x_p: data['x_p'][derivative_indices[combination * n.n_p: (combination + 1) * n.n_p]], n.dropout: keep_rate, n.ϕ: True})
+                train_F.append(np.linalg.det(n.sess.run(n.F, feed_dict = {n.x_central: data['x_central'][central_indices[combination * n.n_s: (combination + 1) * n.n_s]], n.x_m: data['x_m'][derivative_indices[combination * n.n_p: (combination + 1) * n.n_p]], n.x_p: data['x_p'][derivative_indices[combination * n.n_p: (combination + 1) * n.n_p]], n.dropout: 1., n.ϕ: False})))
             if test:
                 if n.x_central.op.type != 'Placeholder':
                     test_F.append(np.linalg.det(n.sess.run(n.test_F)))
                 else:
-                    test_F.append(np.linalg.det(n.sess.run(n.test_F, feed_dict = {n.x_central: data['x_central_test'], n.x_m: data['x_m_test'], n.x_p: data['x_p_test'], n.dropout: 1.})))
+                    test_F.append(np.linalg.det(n.sess.run(n.test_F, feed_dict = {n.x_central: data['x_central_test'], n.x_m: data['x_m_test'], n.x_p: data['x_p_test'], n.dropout: 1., n.ϕ: False})))
                 tq.set_postfix(detF = train_F[-1], detF_test = test_F[-1])
             else:
                 tq.set_postfix(detF = train_F[-1])
@@ -796,6 +803,7 @@ class IMNN():
         # x_m                         n tensor    - below fiducial simulation input tensor
         # x_p                         n tensor    - above fiducial simulation input tensor
         # dropout                     n tensor    - keep rate for dropout layer
+        # ϕ                           n tensor    - boolean phase for batch normalisation
         # output                      n tensor    - network output for simulations at fiducial parameter value
         # n_summaries                 n int       - number of outputs from the network
         #______________________________________________________________
@@ -813,7 +821,7 @@ class IMNN():
         if n.x_central.op.type != 'Placeholder':
             F = n.sess.run(n.test_F)
         else:
-            F = n.sess.run(n.test_F, feed_dict = {n.x_central: data['x_central_test'], n.x_m: data['x_m_test'], n.x_p: data['x_p_test'], n.dropout: 1.})
+            F = n.sess.run(n.test_F, feed_dict = {n.x_central: data['x_central_test'], n.x_m: data['x_m_test'], n.x_p: data['x_p_test'], n.dropout: 1., n.ϕ: False})
         summary = n.sess.run(n.output, feed_dict = {n.x: real_data, n.dropout: 1.})[0]
         θ = np.random.uniform(prior[0], prior[1], draws)
         if at_once:
@@ -974,7 +982,7 @@ class IMNN():
         if n.x_central.op.type != 'Placeholder':
             return n.sess.run(n.MLE, feed_dict = {n.x: real_data, n.dropout: 1.})
         else:
-            return n.sess.run(n.MLE, feed_dict = {n.x: real_data, n.x_central: data['x_central_test'], n.x_m: data['x_m_test'], n.x_p: data['x_p_test'], n.dropout: 1.})
+            return n.sess.run(n.MLE, feed_dict = {n.x: real_data, n.x_central: data['x_central_test'], n.x_m: data['x_m_test'], n.x_p: data['x_p_test'], n.dropout: 1., n.ϕ: False})
 
     def asymptotic_likelihood(n, real_data, prior, data = None):
         # CALCULATE ASYMPTOTIC LIKELIHOOD OVER PARAMETER RANGE
@@ -999,4 +1007,4 @@ class IMNN():
         if n.x_central.op.type != 'Placeholder':
             return n.sess.run(n.AL, feed_dict = {n.x: real_data, n.prior: prior, n.dropout: 1.})
         else:
-            return n.sess.run(n.AL, feed_dict = {n.x: real_data, n.x_central: data['x_central_test'], n.x_m: data['x_m_test'], n.x_p: data['x_p_test'], n.prior: prior, n.dropout: 1.})
+            return n.sess.run(n.AL, feed_dict = {n.x: real_data, n.x_central: data['x_central_test'], n.x_m: data['x_m_test'], n.x_p: data['x_p_test'], n.prior: prior, n.dropout: 1., n.ϕ: False})

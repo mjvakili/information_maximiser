@@ -299,9 +299,9 @@ parameters = {
 ```
 
 ### Self-defined network
-A self defined network can be used instead of letting the module build the network for you. This function needs to take in two input tensors, the first is the shape of the input with `None` in the first axis and the second tensor is a tensorflow float (which will be the dropout). Since the weights need to be shared between several corresponding networks each set of trainable variables must be defined in its own scope. An example of the above network defined outside of the module is
+A self defined network can be used instead of letting the module build the network for you. This function needs to take in three input tensors, the first is the shape of the input with `None` in the first axis, the second tensor is a tensorflow float for the dropout and the last is a tensorflow boolean for batch normalisation phases. Since the weights need to be shared between several corresponding networks each set of trainable variables must be defined in its own scope. An example of the above network defined outside of the module is
 ```python
-def network(input_tensor, dropout):
+def network(input_tensor, dropout, ϕ):
     with tf.variable_scope('layer_1'):
         weights = tf.get_variable("weights", [5, 5, 1, 10], initializer = tf.random_normal_initializer(0., 1.))
         biases = tf.get_variable("biases", [10], initializer = tf.constant_initializer(0.1))
@@ -469,7 +469,7 @@ We can run
 train_F, test_F = n.train(num_epochs = num_epochs, n_train = n_train, keep_rate = keep_rate)
 ```
 
-    100%|██████████| 1000/1000 [02:38<00:00,  6.33it/s, detF=81.4, detF_test=38.3]
+    100%|██████████| 1000/1000 [04:24<00:00,  3.78it/s, detF=79.2, detF_test=43.5]
 
     saving the graph as data/saved_model.meta
 
@@ -623,7 +623,7 @@ Here we can use
 θ_, summary_, ρ_, s_, W, total_draws, F = n.PMC(real_data = real_data, prior = [0, 10], num_draws = 1000, num_keep = 1000, generate_simulation = generate_data, criterion = 0.1, at_once = True, samples = None)
 ```
 
-    iteration = 26, current criterion = 0.08313934153641503, total draws = 66719, ϵ = 40.427178382873535.
+    iteration = 27, current criterion = 0.09462528387585163, total draws = 60848, ϵ = 74.71925735473633..
 
 If we want the PMC to continue for longer we can provide the output of PMC as an input as
 ```python

@@ -224,6 +224,28 @@ ax[2, 1].set_xlabel('Difference between upper and lower test images');
 ![png](figures/output_29_0.png)
 
 
+### Data for covariance regularisation
+
+We can use the covariance of a set of randomly drawn simulations as a regulariser in the loss function to prevent the covariance of the fiducial parameters collapsing. To do this we create a set of simulations drawn from a Gaussian prior.
+
+
+```python
+num_check_sim = 100
+check_covariance = np.array([[0.1]])
+```
+
+
+```python
+θ_check = np.random.multivariate_normal([θ_fid], check_covariance, num_check_sim)
+failed_draw = np.where(θ_check <= 0)
+while len(failed_draw[0]) > 0:
+    θ_check[failed_draw[0]] = np.random.multivariate_normal([θ_fid], check_covariance, len(failed_draw[0]))
+    failed_draw = np.where(θ_check <= 0)
+θ_check = θ_check.reshape((num_check_sim))
+check_sims = generate_data(θ_check)
+data["x_check"] = check_sims
+```
+
 ## Initiliase the neural network
 ### Define network parameters
 The network works with a base set of parameters which are<br>
@@ -244,6 +266,8 @@ The network works with a base set of parameters which are<br>
 > `'preload data'` - `dict` or `None` - the training (and test) data to preload as a TensorFlow constant in a dictionary, no preloading is done if `None`
 
 > `'calculate MLE'` - `bool` - whether to calculate the maximum likelihood estimate
+
+> `'covariance regularisation'` - `bool` - whether to regularise the loss using the covariance of some parameters
 
 > `'prebuild'` - `bool` - whether to get the network to build a network or to provided your own
 
@@ -274,7 +298,12 @@ The module can also build simple convolutional or dense networks (or a mixture o
 
 > `'hidden layers'` - `list` - the architecture of the network. each element of the list is a hidden layer. A dense layer can be made using an integer where thet value indicates the number of neurons. A convolutional layer can be built by using a list where the first element is an integer where the number describes the number of filters, the second element is a list of the kernel size in the x and y directions, the third elemnet is a list of the strides in the x and y directions and the final element is string of 'SAME' or 'VALID' which describes the padding prescription.
 
-Here is an example of the IMNN which uses 1000 simulations per combination and 50 upper and 50 lower simulations per derivative for a model with one parameter where we require one summary which are preloaded as a TensorFlow constant where we want to have access to the precomputed maximum likelihood estimate. The module will build the network which takes in an input array of shape `[10, 20, 1]` and allows the network to decide the weight initialisation, initialises the biases at `bb = 0.1` and uses `tf.nn.leaky_relu` activation with a negative gradient parameter of `α = 0.01`. The network architecture is a convolution with 10 filters and a 5$\times$5 kernel which does 2$\times$2 strides, with 0-padding, followed by another convolution with 6 filters and 3$\times$3 kernel with no striding and 0-padding. This is then followed by two dense layers with 100 neurons in each. We will save the graph into a file in the `data` folder called `saved_model.meta`.
+If `covariance regularisation` is `True` then `get_MLE` must be set to `True` and two more parameters are needed in the dictionary<br>
+> `'number of simulations for covariance regularisation'` - `int` - the number of simulations to approximate the covariance for regularisation
+
+> `'comparison covariance'` - `array` - a numpy array of the proposal covariance where the simulations for checking were made
+
+Here is an example of the IMNN which uses 1000 simulations per combination and 50 upper and 50 lower simulations per derivative for a model with one parameter where we require one summary which are preloaded as a TensorFlow constant where we want to have access to the precomputed maximum likelihood estimate. The module will build the network which takes in an input array of shape `[10, 20, 1]` and allows the network to decide the weight initialisation, initialises the biases at `bb = 0.1` and uses `tf.nn.leaky_relu` activation with a negative gradient parameter of `α = 0.01`. The network architecture is a convolution with 10 filters and a 5$\times$5 kernel which does 2$\times$2 strides, with 0-padding, followed by another convolution with 6 filters and 3$\times$3 kernel with no striding and 0-padding. This is then followed by two dense layers with 100 neurons in each. We will use covariance regularisation and will save the graph into a file in the `data` folder called `saved_model.meta`.
 
 
 ```python
@@ -289,6 +318,9 @@ parameters = {
     'prebuild': True,
     'input shape': input_shape,
     'preload data': data,
+    'covariance regularisation': True,
+    'number of simulations for covariance regularisation': num_check_sim,
+    'comparison covariance': check_covariance,
     'save file': "data/saved_model",
     'wv': 0.,
     'bb': 0.1,
@@ -366,7 +398,6 @@ n.setup(η = η, network = network)
 
 
 ```python
-tf.reset_default_graph()
 n.setup(η = η)
 ```
 
@@ -395,25 +426,30 @@ n.setup(η = η)
     Tensor("IMNN_1/layer_3_2/dense_3/mul:0", shape=(50, 100), dtype=float32)
     Tensor("IMNN_1/layer_4_2/dense_4/mul:0", shape=(50, 100), dtype=float32)
     Tensor("IMNN_1/layer_5_2/LeakyRelu:0", shape=(50, 1), dtype=float32)
-    Tensor("Const_3:0", shape=(1000, 10, 20, 1), dtype=float32)
+    Tensor("x_central_test:0", shape=(1000, 10, 20, 1), dtype=float32)
     Tensor("IMNN_1/layer_1_3/LeakyRelu:0", shape=(1000, 5, 10, 10), dtype=float32)
     Tensor("IMNN_1/layer_2_3/LeakyRelu:0", shape=(1000, 5, 10, 6), dtype=float32)
     Tensor("IMNN_1/layer_3_3/LeakyRelu:0", shape=(1000, 100), dtype=float32)
     Tensor("IMNN_1/layer_4_3/LeakyRelu:0", shape=(1000, 100), dtype=float32)
     Tensor("IMNN_1/layer_5_3/LeakyRelu:0", shape=(1000, 1), dtype=float32)
-    Tensor("Reshape_2:0", shape=(50, 10, 20, 1), dtype=float32)
+    Tensor("x_m_test:0", shape=(50, 10, 20, 1), dtype=float32)
     Tensor("IMNN_1/layer_1_4/LeakyRelu:0", shape=(50, 5, 10, 10), dtype=float32)
     Tensor("IMNN_1/layer_2_4/LeakyRelu:0", shape=(50, 5, 10, 6), dtype=float32)
     Tensor("IMNN_1/layer_3_4/LeakyRelu:0", shape=(50, 100), dtype=float32)
     Tensor("IMNN_1/layer_4_4/LeakyRelu:0", shape=(50, 100), dtype=float32)
     Tensor("IMNN_1/layer_5_4/LeakyRelu:0", shape=(50, 1), dtype=float32)
-    Tensor("Reshape_3:0", shape=(50, 10, 20, 1), dtype=float32)
+    Tensor("x_p_test:0", shape=(50, 10, 20, 1), dtype=float32)
     Tensor("IMNN_1/layer_1_5/LeakyRelu:0", shape=(50, 5, 10, 10), dtype=float32)
     Tensor("IMNN_1/layer_2_5/LeakyRelu:0", shape=(50, 5, 10, 6), dtype=float32)
     Tensor("IMNN_1/layer_3_5/LeakyRelu:0", shape=(50, 100), dtype=float32)
     Tensor("IMNN_1/layer_4_5/LeakyRelu:0", shape=(50, 100), dtype=float32)
     Tensor("IMNN_1/layer_5_5/LeakyRelu:0", shape=(50, 1), dtype=float32)
-    Tensor("central_output:0", shape=(1000, 1), dtype=float32)
+    Tensor("x_check:0", shape=(100, 10, 20, 1), dtype=float32)
+    Tensor("IMNN_1/layer_1_6/LeakyRelu:0", shape=(100, 5, 10, 10), dtype=float32)
+    Tensor("IMNN_1/layer_2_6/LeakyRelu:0", shape=(100, 5, 10, 6), dtype=float32)
+    Tensor("IMNN_1/layer_3_6/LeakyRelu:0", shape=(100, 100), dtype=float32)
+    Tensor("IMNN_1/layer_4_6/LeakyRelu:0", shape=(100, 100), dtype=float32)
+    Tensor("IMNN_1/layer_5_6/LeakyRelu:0", shape=(100, 1), dtype=float32)
     Tensor("central_mean:0", shape=(1,), dtype=float32)
     Tensor("central_difference_from_mean:0", shape=(1000, 1), dtype=float32)
     Tensor("central_covariance:0", shape=(1, 1), dtype=float32)
@@ -421,7 +457,6 @@ n.setup(η = η)
     Tensor("lower_output:0", shape=(50, 1, 1), dtype=float32)
     Tensor("upper_output:0", shape=(50, 1, 1), dtype=float32)
     Tensor("upper_lower_mean_derivative:0", shape=(1, 1), dtype=float32)
-    Tensor("central_output_1:0", shape=(1000, 1), dtype=float32)
     Tensor("central_mean_1:0", shape=(1,), dtype=float32)
     Tensor("central_difference_from_mean_1:0", shape=(1000, 1), dtype=float32)
     Tensor("central_covariance_1:0", shape=(1, 1), dtype=float32)
@@ -432,6 +467,9 @@ n.setup(η = η)
     Tensor("fisher_information:0", shape=(1, 1), dtype=float32)
     Tensor("maximum_likelihood_estimate:0", shape=(?, 1), dtype=float32)
     Tensor("asymptotic_likelihood:0", shape=(?, 1, 1000), dtype=float32)
+    Tensor("central_mean_2:0", shape=(1,), dtype=float32)
+    Tensor("central_difference_from_mean_2:0", shape=(100, 1), dtype=float32)
+    Tensor("central_covariance_2:0", shape=(1, 1), dtype=float32)
     saving the graph as data/saved_model.meta
 
 
@@ -466,10 +504,11 @@ We can run
 
 
 ```python
+n.reinitialise_session()
 train_F, test_F = n.train(num_epochs = num_epochs, n_train = n_train, keep_rate = keep_rate)
 ```
 
-    100%|██████████| 1000/1000 [02:38<00:00,  6.33it/s, detF=81.4, detF_test=38.3]
+    100%|██████████| 1000/1000 [03:36<00:00,  4.61it/s, detF=71.8, detF_test=45.1]
 
     saving the graph as data/saved_model.meta
 
@@ -501,7 +540,7 @@ ax[1].set_xlim([0, len(epochs)]);
 ```
 
 
-![png](figures/output_45_0.png)
+![png](figures/output_48_0.png)
 
 
 We can see that the test loss deviates from the training loss. This is to be expected because there are will be a lot of correlation within a small training set which isn't in the test set. As long as the test loss doesn't start increasing then it is likely that the network is still working, with the maximum Fisher available from the network is the value obtained from the test set.
@@ -553,7 +592,7 @@ ax.set_xlabel('Simulated real image');
 ```
 
 
-![png](figures/output_53_0.png)
+![png](figures/output_56_0.png)
 
 
 ### ABC
@@ -605,7 +644,7 @@ ax[1].set_yticks([]);
 ```
 
 
-![png](figures/output_60_0.png)
+![png](figures/output_63_0.png)
 
 
 There can be a lot of $\theta$ draws which are unconstrained by the network because no similar structures were seen in the data which is indicative of using too small of a small training set.
@@ -623,7 +662,7 @@ Here we can use
 θ_, summary_, ρ_, s_, W, total_draws, F = n.PMC(real_data = real_data, prior = [0, 10], num_draws = 1000, num_keep = 1000, generate_simulation = generate_data, criterion = 0.1, at_once = True, samples = None)
 ```
 
-    iteration = 26, current criterion = 0.08313934153641503, total draws = 66719, ϵ = 40.427178382873535.
+    iteration = 29, current criterion = 0.07462129691814044, total draws = 71405, ϵ = 54.39254093170166.
 
 If we want the PMC to continue for longer we can provide the output of PMC as an input as
 ```python
@@ -647,7 +686,7 @@ ax[1].set_yticks([]);
 ```
 
 
-![png](figures/output_65_0.png)
+![png](figures/output_68_0.png)
 
 
 ## Maximum likelihood estimate
@@ -680,7 +719,7 @@ ax.set_yticks([]);
 ```
 
 
-![png](figures/output_68_0.png)
+![png](figures/output_71_0.png)
 
 
 Notice here that the asymptotic likelihood doesn't work because the network work summaries cause overflow errors in the exponential.
@@ -714,4 +753,4 @@ ax.set_yticks([]);
 ```
 
 
-![png](figures/output_72_0.png)
+![png](figures/output_75_0.png)

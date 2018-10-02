@@ -26,7 +26,7 @@ class utils():
         # necessary_parameters          list      - list of necessary parameters
         # key                           str       - key value to check
         #______________________________________________________________
-        necessary_parameters = ['verbose', 'number of simulations', 'fiducial θ', 'derivative denominator', 'differentiation fraction', 'prebuild', 'input shape', 'number of summaries', 'calculate MLE', 'preload data', 'save file']
+        necessary_parameters = ['verbose', 'number of simulations', 'fiducial θ', 'derivative denominator', 'differentiation fraction', 'prebuild', 'input shape', 'number of summaries', 'calculate MLE', 'preload data', 'save file', 'covariance regularisation']
         for key in necessary_parameters:
             if key not in params.keys():
                 print(key + ' not found in parameter dictionary.')
@@ -674,7 +674,7 @@ class utils():
         # list
         # returns a list of None for each unset shared network parameter
         #______________________________________________________________
-        return [None for i in range(22)]
+        return [None for i in range(25)]
 
     def to_prebuild(u, network):
         # INITIALISES ALL SHARED NETWORK PARAMETERS TO NONE
@@ -772,3 +772,51 @@ class utils():
             if high%low != 0:
                 print('number of combinations needs to be divisible by the number of batches.')
                 sys.exit()
+
+    def covariance_check(u, n, params):
+        # CHECKS WHETHER TO DO COVARIANCE REGULARISATION AND RETURN PARAMETERS IF CORRECT
+        #______________________________________________________________
+        # CALLED FROM (DEFINED IN IMNN.py)
+        # __init__(dict)                          - initialises IMNN
+        #______________________________________________________________
+        # RETURNS
+        # int, array
+        # the number of simulations to approximate covariance and the proposal distribution
+        #______________________________________________________________
+        # INPUTS
+        # get_MLE                     n bool      - whether to calculate maximum likelihood estimate
+        # n_params                    n int       - number of parameters used to create simulations
+        # params                        dict      - dictionary of parameters
+        #______________________________________________________________
+        # FUNCTIONS (DEFINED IN utils.py)
+        # isint(other/list, optional str, optional str)
+        # positive_integer(int, optional str, optional str)
+        #                              int        - returns an integer if input is positive integer
+        #______________________________________________________________
+        # VARIABLES
+        # parameters                    list      - list of necessary dictionary entries for covariance regularisation
+        # covariance_length             int       - number of simulations for covariance regularisation
+        # comparison_C                  array     - proposal distribution for covariance regularisation
+        #______________________________________________________________
+        if not n.get_MLE:
+            print("calculate MLE must be True to use covariance regularisation")
+            sys.exit()
+        parameters = ['number of simulations for covariance regularisation', 'comparison covariance']
+        for key in parameters:
+            if key not in params.keys():
+                print(key + ' not found in parameter dictionary.')
+                sys.exit()
+        covariance_length = u.positive_integer([params, 'number of simulations for covariance regularisation'])
+        if type(params["comparison covariance"]) != np.ndarray:
+            print("comparison covariance for covariance regularisation must be a numpy array of shape (number of parameters, number of parameters)")
+            sys.exit()
+        elif params["comparison covariance"].shape != (n.n_params, n.n_params):
+            print("comparison covariance for covariance regularisation must be a numpy array of shape (number of parameters, number of parameters), but provided has shape " + str(params["comparison covariance"].shape))
+            sys.exit()
+        comparison_C = params["comparison covariance"]
+        return covariance_length, comparison_C
+
+    def check_train_covariance(u, n, data):
+        if n.covariance_check and n.x_check.op.type == "Placeholder" and data is None:
+            print("If using covariance regularisation where the simulations are not preloaded then data['x_check'] needs to be supplied")
+            sys.exit()

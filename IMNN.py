@@ -57,7 +57,6 @@ class IMNN():
         # x_central           setup() n tensor    - input tensor for fiducial simulations
         # central_indices     setup() n tensor    - list of indices to select preloaded central data at
         # derivative_indices  setup() n tensor    - list of indices to select preloaded derivative data at
-        # test_F              setup() n tensor    - Fisher information from test data
         # θ_fid               setup() n tensor    - fiducial parameter input tensor for calculation MLE
         # prior               setup() n tensor    - prior range for each parameter for calculating MLE
         # x_m                 setup() n tensor    - below fiducial simulation input tensor
@@ -66,17 +65,25 @@ class IMNN():
         # dropout             setup() n tensor    - keep rate for dropout layer
         # output              setup() n tensor    - network output for simulations at fiducial parameter value
         # F                   setup() n tensor    - Fisher information matrix
+        # μ                   setup() n tensor    - mean of network outputs for fiducial simulations
+        # C                   setup() n tensor    - covariance of network outputs for fiducial simulations
+        # iC                  setup() n tensor    - inverse covariance of network outputs for fiducial simulations
+        # dμdθ                setup() n tensor    - numerical derivative of the mean of network outputs
+        # Λ                   setup() n tensor    - value of the loss function
+        # test_F              setup() n tensor    - Fisher information from test data
+        # test_μ              setup() n tensor    - mean of network outputs for fiducial test simulations
+        # test_C              setup() n tensor    - covariance of network outputs for fiducial test simulations
+        # test_iC             setup() n tensor    - inverse covariance of network outputs for fiducial test simulations
+        # test_dμdθ           setup() n tensor    - numerical derivative of the mean of network outputs from test simulations
+        # test_Λ              setup() n tensor    - loss function from test simulations
         # MLE                 setup() n tensor    - MLE of parameters
         # AL                  setup() n tensor    - asymptotic likelihood at range of parameter values
         # backpropagate       setup() n tf opt    - minimisation scheme for the network
-        # μ                  Fisher() n tensor    - mean of network outputs for fiducial simulations
-        # C                  Fisher() n tensor    - covariance of network outputs for fiducial simulations
-        # iC                 Fisher() n tensor    - inverse covariance of network outputs for fiducial simulations
-        # dμdθ               Fisher() n tensor    - numerical derivative of the mean of network outputs
         # x_check                     n tensor    - tensor for simulations to calculate covariance for covariance regularisation
         # Q                           n tensor    - proposal distribution to compare with output covariance for regularisation
         # C_check                     n tensor    - covariance to compare with proposal distribution for covariance regularisation
         # saver        save_network() n tf op     - saver operation for saving model
+        # history             train() n dict      - dictionary for training history
         #______________________________________________________________
         u = utils.utils()
         n._FLOATX = tf.float32
@@ -102,7 +109,7 @@ class IMNN():
             n.bb = u.isfloat([parameters, 'bb'])
             n.activation, n.takes_α, n.α = u.activation(parameters)
             n.layers = u.hidden_layers(parameters, n)
-        n.sess, n.x, n.x_central, n.central_indices, n.derivative_indices, n.test_F, n.θ_fid, n.prior, n.x_m, n.x_p, n.dd, n.dropout, n.output, n.F, n.MLE, n.AL, n.backpropagate, n.μ, n.C, n.iC, n.dμdθ, n.x_check, n.C_check, n.Q, n.saver = u.initialise_variables()
+        n.sess, n.x, n.x_central, n.central_indices, n.derivative_indices, n.θ_fid, n.prior, n.x_m, n.x_p, n.dd, n.dropout, n.output, n.F, n.μ, n.C, n.iC, n.dμdθ, n.Λ, n.test_F, n.test_μ, n.test_C, n.test_iC, n.test_dμdθ, n.test_Λ, n.MLE, n.AL, n.x_check, n.C_check, n.Q, n.backpropagate, n.saver, n.history = u.initialise_variables()
 
     def begin_session(n):
         # BEGIN TENSORFLOW SESSION AND INITIALISE PARAMETERS
@@ -180,6 +187,13 @@ class IMNN():
         # iC                          n tensor    - inverse covariance of network outputs for fiducial simulations
         # μ                           n tensor    - mean of network outputs for fiducial simulations
         # dμdθ                        n tensor    - numerical derivative of the mean of network outputs
+        # Λ                           n tensor    - loss function
+        # test_F                      n tensor    - Fisher information matrix from test simulations
+        # test_iC                     n tensor    - inverse covariance of network outputs for fiducial test simulations
+        # test_μ                      n tensor    - mean of network outputs for fiducial test simulations
+        # test_dμdθ                   n tensor    - numerical derivative of the mean of network outputs from test simulations
+        # test_C                      n tensor    - covariance of network outputs for fiducial test simulations
+        # test_Λ                      n tensor    - loss function from test simulations
         # MLE                         n tensor    - MLE of parameters
         # AL                          n tensor    - asymptotic likelihood at range of parameter values
         # central_indices             n tensor    - list of indices to select preloaded central data at
@@ -209,6 +223,13 @@ class IMNN():
             n.iC = tf.get_default_graph().get_tensor_by_name("inverse_covariance:0")
             n.μ = tf.get_default_graph().get_tensor_by_name("mean:0")
             n.dμdθ = tf.get_default_graph().get_tensor_by_name("mean_derivative:0")
+            n.Λ = tf.get_default_graph().get_tensor_by_name("loss:0")
+            n.test_F = tf.get_default_graph().get_tensor_by_name("test_F:0")
+            n.test_C = tf.get_default_graph().get_tensor_by_name("test_covariance:0")
+            n.test_iC = tf.get_default_graph().get_tensor_by_name("test_inverse_covariance:0")
+            n.test_μ = tf.get_default_graph().get_tensor_by_name("test_mean:0")
+            n.test_dμdθ = tf.get_default_graph().get_tensor_by_name("test_mean_derivative:0")
+            n.test_Λ = tf.get_default_graph().get_tensor_by_name("test_loss:0")
             if n.get_MLE:
                 n.MLE = tf.get_default_graph().get_tensor_by_name("maximum_likelihood_estimate:0")
                 n.AL = tf.get_default_graph().get_tensor_by_name("asymptotic_likelihood:0")
@@ -219,7 +240,7 @@ class IMNN():
                 n.x_check = tf.get_default_graph().get_tensor_by_name("x_check:0")
                 n.Q = tf.get_default_graph().get_tensor_by_name("Q:0")
                 n.C_check = tf.get_tensor_by_name().get_tensor_by_name("covariance_check")
-            n.backpropagate = tf.get_default_graph().get_operation_by_name("Adam")
+            n.backpropagate = tf.get_default_graph().get_operation_by_name("GradientDescent")
 
     def dense(n, input_tensor, l, dropout):
         # DENSE LAYER
@@ -482,7 +503,7 @@ class IMNN():
         # approximate_likelihood        tensor    - approximate likelihood over prior range
         #______________________________________________________________
         Δθ = n.prior - tf.expand_dims(tf.expand_dims(n.θ_fid, 0), 2)
-        asymptotic_likelihood = tf.exp(- 0.5 * (tf.expand_dims(tf.expand_dims(tf.einsum("ij,ij->i", output, tf.einsum("ij,kj->ki", n.iC, output)) + tf.einsum("i,ji->j", n.μ, tf.einsum("ij,kj->ki", n.iC, output)) + tf.einsum("ij,j->i", output, tf.einsum("ij,j->i", n.iC, n.μ)) + tf.einsum("i,i->", n.μ, tf.einsum("ij,j->i", n.iC, n.μ)), 1), 2) - tf.einsum("ijk,ij->ijk", Δθ, tf.einsum("ij,kj->ki", n.dμdθ, tf.einsum("ij,kj->ki", n.iC, output))) - tf.einsum("ijk,ij->ijk", Δθ, tf.einsum("ij,kj->ik", output, tf.einsum("ij,kj->ki", n.iC, n.dμdθ))) + tf.einsum("ijk,j->ijk", Δθ, tf.einsum("ij,j->i", n.dμdθ, tf.einsum("ij,j->i", n.iC, n.μ))) + tf.einsum("ijk,j->ijk", Δθ, tf.einsum("i,ji->j", n.μ, tf.einsum("ij,kj->ki", n.iC, n.dμdθ))) + tf.einsum("ijk,ijk->ijk", Δθ, tf.einsum("ijk,j->ijk", Δθ, tf.einsum("ij,ij->i", n.dμdθ, tf.einsum("ij,kj->ki", n.iC, n.dμdθ))))))
+        asymptotic_likelihood = tf.exp(- 0.5 * (tf.expand_dims(tf.expand_dims(tf.einsum("ij,ij->i", output, tf.einsum("ij,kj->ki", n.test_iC, output)) + tf.einsum("i,ji->j", n.test_μ, tf.einsum("ij,kj->ki", n.test_iC, output)) + tf.einsum("ij,j->i", output, tf.einsum("ij,j->i", n.test_iC, n.test_μ)) + tf.einsum("i,i->", n.test_μ, tf.einsum("ij,j->i", n.test_iC, n.test_μ)), 1), 2) - tf.einsum("ijk,ij->ijk", Δθ, tf.einsum("ij,kj->ki", n.test_dμdθ, tf.einsum("ij,kj->ki", n.test_iC, output))) - tf.einsum("ijk,ij->ijk", Δθ, tf.einsum("ij,kj->ik", output, tf.einsum("ij,kj->ki", n.test_iC, n.test_dμdθ))) + tf.einsum("ijk,j->ijk", Δθ, tf.einsum("ij,j->i", n.test_dμdθ, tf.einsum("ij,j->i", n.test_iC, n.test_μ))) + tf.einsum("ijk,j->ijk", Δθ, tf.einsum("i,ji->j", n.test_μ, tf.einsum("ij,kj->ki", n.test_iC, n.test_dμdθ))) + tf.einsum("ijk,ijk->ijk", Δθ, tf.einsum("ijk,j->ijk", Δθ, tf.einsum("ij,ij->i", n.test_dμdθ, tf.einsum("ij,kj->ki", n.test_iC, n.test_dμdθ))))))
         return asymptotic_likelihood / tf.reduce_sum(tf.einsum("ijk,ij->ijk", asymptotic_likelihood, (n.prior[:, :, 1] - n.prior[:, :, 0])), 2, keepdims = True)
 
     def maximum_likelihood_estimate(n, output):
@@ -507,7 +528,7 @@ class IMNN():
         # iF                            tensor    - inverse Fisher information matrix from fiducial simulations
         #______________________________________________________________
         iF = tf.matrix_inverse(n.test_F)
-        return tf.expand_dims(n.θ_fid, 0) + tf.einsum("ij,kj->ki", iF, tf.einsum("ij,kj->ki", tf.einsum("ij,kj->ki", n.iC, n.dμdθ), output - tf.expand_dims(n.μ, 0)))
+        return tf.expand_dims(n.θ_fid, 0) + tf.einsum("ij,kj->ki", iF, tf.einsum("ij,kj->ki", tf.einsum("ij,kj->ki", n.test_iC, n.test_dμdθ), output - tf.expand_dims(n.test_μ, 0)))
 
     def loss(n, F):
         # CALCULATE THE LOSS FUNCTION
@@ -531,9 +552,9 @@ class IMNN():
         # Λ                             tensor    - loss function
         #______________________________________________________________
         IFI = tf.matrix_determinant(F)
-        Λ = tf.multiply(tf.constant(-0.5, dtype = n._FLOATX), tf.square(IFI))
+        Λ = tf.multiply(tf.constant(-0.5, dtype = n._FLOATX), tf.square(IFI))# + tf.exp(-10.*tf.matrix_determinant(n.C))
         if n.covariance_check:
-            Λ = Λ + tf.nn.relu(tf.matrix_determinant(n.Q) - tf.matrix_determinant(n.C_check))
+            Λ = Λ - tf.square(tf.matrix_determinant(n.Q) - tf.matrix_determinant(n.C_check))#tf.nn.relu(tf.matrix_determinant(n.Q) - tf.matrix_determinant(n.C_check))
         return Λ
 
     def setup(n, η, network = None):
@@ -596,19 +617,18 @@ class IMNN():
         # test_output_m                 tensor    - network output for test simulations below fiducial parameter value to calculate fisher
         # test_output_p                 tensor    - network output for test simulations above fiducial parameter value to calculate fisher
         # output_check                  tensor    - network output for simulations to calculate covariance for covariance regularisation
-        # F                             tensor    - Fisher information matrix
-        # F                           n tensor    - Fisher information matrix (named)
-        # _                                       - ignored placeholder variable
-        # test_F                        tensor    - Fisher information matrix from test simulations
-        # iC                            tensor    - inverse covariance of network outputs for fiducial test simulations
-        # μ                             tensor    - mean of network outputs for fiducial test simulations (named)
-        # dμdθ                          tensor    - numerical derivative of the mean of network outputs (named)
-        # C                             tensor    - covariance of network outputs for fiducial test simulations (named)
-        # test_F                      n tensor    - Fisher information matrix from test simulations (named)
-        # iC                          n tensor    - inverse covariance of network outputs for fiducial test simulations (named)
-        # μ                           n tensor    - mean of network outputs for fiducial test simulations (named)
-        # dμdθ                        n tensor    - numerical derivative of the mean of network outputs (named)
-        # C                           n tensor    - covariance of network outputs for fiducial test simulations (named)
+        # F                           n tensor    - Fisher information matrix
+        # iC                          n tensor    - inverse covariance of network outputs for fiducial simulations
+        # μ                           n tensor    - mean of network outputs for fiducial simulations
+        # dμdθ                        n tensor    - numerical derivative of the mean of network outputs
+        # C                           n tensor    - covariance of network outputs for fiducial test simulations
+        # Λ                           n tensor    - loss function
+        # test_F                      n tensor    - Fisher information matrix from test simulations
+        # test_iC                     n tensor    - inverse covariance of network outputs for fiducial test simulations
+        # test_μ                      n tensor    - mean of network outputs for fiducial test simulations
+        # test_dμdθ                   n tensor    - numerical derivative of the mean of network outputs from test simulations
+        # test_C                      n tensor    - covariance of network outputs for fiducial test simulations
+        # test_Λ                      n tensor    - loss function from test simulations
         # MLE                         n tensor    - MLE of parameters
         # AL                          n tensor    - asymptotic likelihood at range of parameter values
         # C_check                     n tensor    - covariance to compare with proposal distribution for covariance regularisation
@@ -681,22 +701,28 @@ class IMNN():
                 test_output_p = output_p
             if n.covariance_check:
                 output_check = network(n.x_check, 1.)
-        F, _, _, _ ,_ = n.Fisher(output_central, output_m, output_p)
+        F, iC, μ, dμdθ, C = n.Fisher(output_central, output_m, output_p)
         n.F = tf.identity(F, name = 'fisher_information')
-        test_F, iC, μ, dμdθ, C  = n.Fisher(test_output_central, test_output_m, test_output_p)
-        n.test_F = tf.identity(test_F, name = "test_F")
+        if n.verbose: print(n.F)
         n.iC = tf.identity(iC, name = 'inverse_covariance')
         n.C = tf.identity(C, name = 'covariance')
         n.μ = tf.identity(μ, name = 'mean')
         n.dμdθ = tf.identity(dμdθ, name = 'mean_derivative')
-        if n.verbose: print(n.F)
+        test_F, test_iC, test_μ, test_dμdθ, test_C  = n.Fisher(test_output_central, test_output_m, test_output_p)
+        n.test_F = tf.identity(test_F, name = "test_F")
+        n.test_iC = tf.identity(test_iC, name = 'test_inverse_covariance')
+        n.test_C = tf.identity(test_C, name = 'test_covariance')
+        n.test_μ = tf.identity(test_μ, name = 'test_mean')
+        n.test_dμdθ = tf.identity(test_dμdθ, name = 'test_mean_derivative')
         if n.get_MLE:
             n.MLE = tf.identity(n.maximum_likelihood_estimate(n.output), name = "maximum_likelihood_estimate")
             if n.verbose: print(n.MLE)
             n.AL = tf.identity(n.calculate_asymptotic_likelihood(n.output), name = "asymptotic_likelihood")
             if n.verbose: print(n.AL)
         if n.covariance_check:
-            n.C_check = n.identity(n.inverse_covariance(n.maximum_likelihood_estimate(output_check), covariance_only = True), name = "covariance_check")
+            n.C_check = tf.identity(n.inverse_covariance(n.maximum_likelihood_estimate(output_check), covariance_only = True), name = "covariance_check")
+        n.Λ = tf.identity(n.loss(n.F), name = 'loss')
+        n.test_Λ = tf.identity(n.loss(n.test_F), name = 'test_loss')
         n.training_scheme(η)
         n.begin_session()
 
@@ -714,13 +740,14 @@ class IMNN():
         # F                           n tensor    - Fisher information matrix
         #______________________________________________________________
         # VARIABLES
+        # Λ                           n tensor    - loss function to minimise
         # backpropagate               n tf opt    - minimisation scheme for the network
         #______________________________________________________________
         η = utils.utils().isfloat(η, key = 'η')
-        n.backpropagate = tf.train.AdamOptimizer(η).minimize(n.loss(n.F))
-        #n.backpropagate = tf.train.GradientDescentOptimizer(η).minimize(n.loss(n.F))
+        #n.backpropagate = tf.train.AdamOptimizer(η, epsilon = 1.).minimize(n.Λ)
+        n.backpropagate = tf.train.GradientDescentOptimizer(η).minimize(n.Λ)
 
-    def train(n, num_epochs, n_train, keep_rate, data = None):
+    def train(n, num_epochs, n_train, keep_rate, history = True, data = None):
         # TRAIN INFORMATION MAXIMISING NEURAL NETWORK
         #______________________________________________________________
         # RETURNS
@@ -739,6 +766,7 @@ class IMNN():
         # num_epochs                    int       - number of epochs to train
         # n_train                       int       - number of combinations to split training set into
         # keep_rate                     float     - keep rate for dropout
+        # history                       bool      - whether to collect training history
         # data                          dict      - data at fiducial, lower and upper parameter values (with test versions)
         # sess                        n session   - interactive tensorflow session (with initialised parameters)
         # backpropagate               n tf opt    - minimisation scheme for the network
@@ -758,8 +786,7 @@ class IMNN():
         #______________________________________________________________
         # VARIABLES
         # test                          bool      - True if using test_data
-        # train_F                       list      - determinant Fisher information matrix at end of train epoch
-        # test_F                        list      - determinant Fisher information matrix of test data at end of epoch
+        # history                     n history   - dictionary of history of various parameter during training
         # tq                            tqdm loop - a looper in tqdm for showing the progress bar
         # epoch                         int       - epoch counter
         # central_indices               array     - list of indices at which to select the central data for training
@@ -771,16 +798,31 @@ class IMNN():
         keep_rate = utils.utils().constrained_float(keep_rate, key = 'dropout')
         utils.utils().check_train_covariance(n, data)
 
-        train_F = []
-
-        if n.x_central.op.type != 'Placeholder':
-            for key in n.preload_data.keys():
-                data[key] = n.preload_data[key]
-        if 'x_central_test' in data.keys():
-            test = True
-            test_F = []
-        else:
-            test = False
+        n.history = {}
+        n.history["F"] = []
+        n.history["det(F)"] = []
+        if history:
+            n.history["Λ"] = []
+            n.history["μ"] = []
+            n.history["C"] = []
+            n.history["det(C)"] = []
+            n.history["dμdθ"] = []
+            if n.covariance_check:
+                n.history["C check"] = []
+                n.history["det(C check)"] = []
+            if n.x_central.op.type != 'Placeholder':
+                data = n.preload_data
+            if 'x_central_test' in data.keys():
+                test = True
+                n.history["test F"] = []
+                n.history["det(test F)"] = []
+                n.history["test Λ"] = []
+                n.history["test μ"] = []
+                n.history["test C"] = []
+                n.history["det(test C)"] = []
+                n.history["test dμdθ"] = []
+            else:
+                test = False
 
         central_indices = np.arange(n.n_s * n_train)
         derivative_indices = np.arange(n.n_p * n_train)
@@ -789,33 +831,65 @@ class IMNN():
             np.random.shuffle(central_indices)
             np.random.shuffle(derivative_indices)
             if n.x_central.op.type != 'Placeholder':
-                for combination in range(n_train):
-                    if n.covariance_check and n.x_check.op.type == "Placeholder":
+                if n.covariance_check and n.x_check.op.type == "Placeholder":
+                    for combination in range(n_train):
                         n.sess.run(n.backpropagate, feed_dict = {n.central_indices: central_indices[combination * n.n_s: (combination + 1) * n.n_s].reshape((n.n_s, 1)), n.derivative_indices: derivative_indices[combination * n.n_p: (combination + 1) * n.n_p].reshape((n.n_p, 1)), n.dropout: keep_rate, n.x_check: data["x_check"]})
-                    else:
-                        n.sess.run(n.backpropagate, feed_dict = {n.central_indices: central_indices[combination * n.n_s: (combination + 1) * n.n_s].reshape((n.n_s, 1)), n.derivative_indices: derivative_indices[combination * n.n_p: (combination + 1) * n.n_p].reshape((n.n_p, 1)), n.dropout: keep_rate})
-                train_F.append(np.linalg.det(n.sess.run(n.F, feed_dict = {n.central_indices: central_indices[combination * n.n_s: (combination + 1) * n.n_s].reshape((n.n_s, 1)), n.derivative_indices: derivative_indices[combination * n.n_p: (combination + 1) * n.n_p].reshape((n.n_p, 1)), n.dropout: 1.})))
-            else:
-                for combination in range(n_train):
-                    if n.covariance_check:
-                        n.sess.run(n.backpropagate, feed_dict = {n.x_central: data['x_central'][central_indices[combination * n.n_s: (combination + 1) * n.n_s]], n.x_m: data['x_m'][derivative_indices[combination * n.n_p: (combination + 1) * n.n_p]], n.x_p: data['x_p'][derivative_indices[combination * n.n_p: (combination + 1) * n.n_p]], n.dropout: keep_rate, n.x_check: data["x_check"]})
-                    else:
-                        n.sess.run(n.backpropagate, feed_dict = {n.x_central: data['x_central'][central_indices[combination * n.n_s: (combination + 1) * n.n_s]], n.x_m: data['x_m'][derivative_indices[combination * n.n_p: (combination + 1) * n.n_p]], n.x_p: data['x_p'][derivative_indices[combination * n.n_p: (combination + 1) * n.n_p]], n.dropout: keep_rate})
-                train_F.append(np.linalg.det(n.sess.run(n.F, feed_dict = {n.x_central: data['x_central'][central_indices[combination * n.n_s: (combination + 1) * n.n_s]], n.x_m: data['x_m'][derivative_indices[combination * n.n_p: (combination + 1) * n.n_p]], n.x_p: data['x_p'][derivative_indices[combination * n.n_p: (combination + 1) * n.n_p]], n.dropout: 1.})))
-            if test:
-                if n.x_central.op.type != 'Placeholder':
-                    test_F.append(np.linalg.det(n.sess.run(n.test_F)))
+                    train_F = n.sess.run(n.F, feed_dict = {n.central_indices: central_indices[combination * n.n_s: (combination + 1) * n.n_s].reshape((n.n_s, 1)), n.derivative_indices: derivative_indices[combination * n.n_p: (combination + 1) * n.n_p].reshape((n.n_p, 1)), n.dropout: 1., n.x_check: data["x_check"]})
                 else:
-                    test_F.append(np.linalg.det(n.sess.run(n.test_F, feed_dict = {n.x_central: data['x_central_test'], n.x_m: data['x_m_test'], n.x_p: data['x_p_test'], n.dropout: 1.})))
-                tq.set_postfix(detF = train_F[-1], detF_test = test_F[-1])
+                    for combination in range(n_train):
+                        n.sess.run(n.backpropagate, feed_dict = {n.central_indices: central_indices[combination * n.n_s: (combination + 1) * n.n_s].reshape((n.n_s, 1)), n.derivative_indices: derivative_indices[combination * n.n_p: (combination + 1) * n.n_p].reshape((n.n_p, 1)), n.dropout: keep_rate})
+                    train_F = n.sess.run(n.F, feed_dict = {n.central_indices: central_indices[combination * n.n_s: (combination + 1) * n.n_s].reshape((n.n_s, 1)), n.derivative_indices: derivative_indices[combination * n.n_p: (combination + 1) * n.n_p].reshape((n.n_p, 1)), n.dropout: 1.})
             else:
-                tq.set_postfix(detF = train_F[-1])
+                if n.covariance_check:
+                    for combination in range(n_train):
+                        n.sess.run(n.backpropagate, feed_dict = {n.x_central: data['x_central'][central_indices[combination * n.n_s: (combination + 1) * n.n_s]], n.x_m: data['x_m'][derivative_indices[combination * n.n_p: (combination + 1) * n.n_p]], n.x_p: data['x_p'][derivative_indices[combination * n.n_p: (combination + 1) * n.n_p]], n.dropout: keep_rate, n.x_check: data["x_check"]})
+                else:
+                    for combination in range(n_train):
+                        n.sess.run(n.backpropagate, feed_dict = {n.x_central: data['x_central'][central_indices[combination * n.n_s: (combination + 1) * n.n_s]], n.x_m: data['x_m'][derivative_indices[combination * n.n_p: (combination + 1) * n.n_p]], n.x_p: data['x_p'][derivative_indices[combination * n.n_p: (combination + 1) * n.n_p]], n.dropout: keep_rate})
+                train_F = n.sess.run(n.F, feed_dict = {n.x_central: data['x_central'][central_indices[combination * n.n_s: (combination + 1) * n.n_s]], n.x_m: data['x_m'][derivative_indices[combination * n.n_p: (combination + 1) * n.n_p]], n.x_p: data['x_p'][derivative_indices[combination * n.n_p: (combination + 1) * n.n_p]], n.dropout: 1.})
+            det_train_F = np.linalg.det(train_F)
+            n.history["F"].append(train_F)
+            n.history["det(F)"].append(np.linalg.det(train_F))
+            if history:
+                if test:
+                    if n.x_central.op.type != 'Placeholder':
+                        if n.covariance_check and n.x_check.op.type == "Placeholder":
+                            μ, C, dμdθ, Λ, C_check, test_F, test_μ, test_C, test_dμdθ, test_Λ = n.sess.run([n.μ, n.C, n.dμdθ, n.Λ, n.C_check, n.test_F, n.test_μ, n.test_C, n.test_dμdθ, n.test_Λ], feed_dict = {n.central_indices: central_indices[combination * n.n_s: (combination + 1) * n.n_s].reshape((n.n_s, 1)), n.derivative_indices: derivative_indices[combination * n.n_p: (combination + 1) * n.n_p].reshape((n.n_p, 1)), n.dropout: 1., n.x_check: data["x_check"]})
+                        elif n.covariance_check and n.x_check.op.type != "Placeholder":
+                            μ, C, dμdθ, Λ, C_check, test_F, test_μ, test_C, test_dμdθ, test_Λ = n.sess.run([n.μ, n.C, n.dμdθ, n.Λ, n.C_check, n.test_F, n.test_μ, n.test_C, n.test_dμdθ, n.test_Λ], feed_dict = {n.central_indices: central_indices[combination * n.n_s: (combination + 1) * n.n_s].reshape((n.n_s, 1)), n.derivative_indices: derivative_indices[combination * n.n_p: (combination + 1) * n.n_p].reshape((n.n_p, 1)), n.dropout: 1.})
+                        else:
+                            μ, C, dμdθ, Λ, test_F, test_μ, test_C, test_dμdθ, test_Λ = n.sess.run([n.μ, n.C, n.dμdθ, n.Λ, n.test_F, n.test_μ, n.test_C, n.test_dμdθ, n.test_Λ], feed_dict = {n.central_indices: central_indices[combination * n.n_s: (combination + 1) * n.n_s].reshape((n.n_s, 1)), n.derivative_indices: derivative_indices[combination * n.n_p: (combination + 1) * n.n_p].reshape((n.n_p, 1)), n.dropout: 1.})
+                    else:
+                        if n.covariance_check:
+                            μ, C, dμdθ, Λ, C_check, test_F, test_μ, test_C, test_dμdθ, test_Λ = n.sess.run([n.μ, n.C, n.dμdθ, n.Λ, n.C_check, n.test_F, n.test_μ, n.test_C, n.test_dμdθ, n.test_Λ], feed_dict = {n.x_central: data['x_central_test'], n.x_m: data['x_m_test'], n.x_p: data['x_p_test'], n.dropout: 1., n.x_check: data["x_check"]})
+                        else:
+                            μ, C, dμdθ, Λ, test_F, test_μ, test_C, test_dμdθ, test_Λ = n.sess.run([n.μ, n.C, n.dμdθ, n.Λ, n.test_F, n.test_μ, n.test_C, n.test_dμdθ, n.test_Λ], feed_dict = {n.x_central: data['x_central_test'], n.x_m: data['x_m_test'], n.x_p: data['x_p_test'], n.dropout: 1.})
+                    n.history["test F"].append(test_F)
+                    n.history["det(test F)"].append(np.linalg.det(test_F))
+                    n.history["test μ"].append(test_μ)
+                    n.history["test C"].append(test_C)
+                    n.history["det(test C)"].append(np.linalg.det(test_C))
+                    n.history["test dμdθ"].append(test_dμdθ)
+                    n.history["test Λ"].append(test_Λ)
+                    if n.covariance_check:
+                        n.history["C check"].append(C_check)
+                        n.history["det(C check)"].append(np.linalg.det(C_check))
+                    tq.set_postfix(detF = n.history["det(F)"][-1], detF_test = n.history["det(test F)"][-1])
+                else:
+                    if n.x_central.op.type != 'Placeholder':
+                        μ, C, dμdθ, Λ = n.sess.run([n.μ, n.C, n.dμdθ, n.Λ], feed_dict = {n.central_indices: central_indices[combination * n.n_s: (combination + 1) * n.n_s].reshape((n.n_s, 1)), n.derivative_indices: derivative_indices[combination * n.n_p: (combination + 1) * n.n_p].reshape((n.n_p, 1)), n.dropout: 1.})
+                    else:
+                        μ, C, dμdθ, Λ = n.sess.run([n.μ, n.C, n.dμdθ, n.Λ], feed_dict = {n.x_central: data['x_central'][central_indices[combination * n.n_s: (combination + 1) * n.n_s]], n.x_m: data['x_m'][derivative_indices[combination * n.n_p: (combination + 1) * n.n_p]], n.x_p: data['x_p'][derivative_indices[combination * n.n_p: (combination + 1) * n.n_p]], n.dropout: 1.})
+                    tq.set_postfix(detF = n.history["det(F)"][-1])
+                n.history["μ"].append(μ)
+                n.history["C"].append(C)
+                n.history["det(C)"].append(np.linalg.det(C))
+                n.history["dμdθ"].append(dμdθ)
+                n.history["Λ"].append(Λ)
+            else:
+                tq.set_postfix(detF = n.history["det(F)"][-1])
         if n.save_file is not None:
             n.save_network()
-        if test:
-            return train_F, test_F
-        else:
-            return train_F
 
     def ABC(n, real_data, prior, draws, generate_simulation, at_once = True, data = None):
         # PERFORM APPROXIMATE BAYESIAN COMPUTATION WITH RANDOM DRAWS FROM PRIOR

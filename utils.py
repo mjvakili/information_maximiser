@@ -26,7 +26,7 @@ class utils():
         # necessary_parameters          list      - list of necessary parameters
         # key                           str       - key value to check
         #______________________________________________________________
-        necessary_parameters = ['verbose', 'number of simulations', 'fiducial θ', 'derivative denominator', 'differentiation fraction', 'prebuild', 'input shape', 'number of summaries', 'calculate MLE', 'preload data', 'save file']
+        necessary_parameters = ['verbose', 'number of simulations', 'fiducial θ', 'differentiation fraction', 'true derivative', 'prebuild', 'input shape', 'number of summaries', 'calculate MLE', 'preload data', 'save file']
         for key in necessary_parameters:
             if key not in params.keys():
                 print(key + ' not found in parameter dictionary.')
@@ -389,12 +389,17 @@ class utils():
                     inputs = [n.inputs]
                 else:
                     inputs = n.inputs
-                if params['preload data']['x_m'].shape[1:] != tuple([n.n_params] + inputs):
-                    print("The lower values of the training data must have the same shape as the input (" + str([n.n_params] + inputs) + "), but has shape " + str(params['preload data']['x_m'].shape[1:]))
-                    sys.exit()
-                if params['preload data']['x_p'].shape[1:] != tuple([n.n_params] + inputs):
-                    print("The upper values of the training data must have the same shape as the input (" + str([n.n_params] + inputs) + "), but has shape " + str(params['preload data']['x_p'].shape[1:]))
-                    sys.exit()
+                if not n.true_derivative:
+                    if params['preload data']['x_m'].shape[1:] != tuple([n.n_params] + inputs):
+                        print("The lower values of the training data must have the same shape as the input (" + str([n.n_params] + inputs) + "), but has shape " + str(params['preload data']['x_m'].shape[1:]))
+                        sys.exit()
+                    if params['preload data']['x_p'].shape[1:] != tuple([n.n_params] + inputs):
+                        print("The upper values of the training data must have the same shape as the input (" + str([n.n_params] + inputs) + "), but has shape " + str(params['preload data']['x_p'].shape[1:]))
+                        sys.exit()
+                else:
+                    if params['preload data']['x_d'].shape[1:] != tuple([n.n_params] + inputs):
+                        print("The derivative values of the training data must have the same shape as the input (" + str([n.n_params] + inputs) + "), but has shape " + str(params['preload data']['x_d'].shape[1:]))
+                        sys.exit()
         return params['preload data']
 
     def check_fiducial(u, params):
@@ -433,6 +438,9 @@ class utils():
         # VARIABLES
         # value                        array      - array containing the fiducial parameter values
         #______________________________________________________________
+        if 'derivative denominator' not in params.keys():
+            print("derivative denominator needs to be provided when doing the numerical derivative")
+            sys.exit()
         value = params['derivative denominator']
         if type(value) != np.ndarray:
             print("derivative denominator must be an 1D array containing the derivative denominator for each parameter. current type is " + str(type(value)))

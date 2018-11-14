@@ -230,7 +230,7 @@ class IMNN():
             #n.backpropagate = tf.get_default_graph().get_operation_by_name("GradientDescent")
             n.backpropagate = tf.get_default_graph().get_operation_by_name("Adam")
 
-    def dense(n, input_tensor, l, dropout):
+    def dense(n, input_tensor, l, dropout, last_layer = False):
         # DENSE LAYER
         #______________________________________________________________
         # CALLED FROM (DEFINED IN IMNN.py)
@@ -269,9 +269,15 @@ class IMNN():
         biases = tf.get_variable("biases", bias_shape, initializer = tf.constant_initializer(n.bb))
         dense = tf.add(tf.matmul(input_tensor, weights), biases)
         if n.takes_α:
-            return tf.nn.dropout(n.activation(dense, n.α), dropout, name = 'dense_' + str(l))
+            output = tf.nn.dropout(n.activation(dense, n.α), dropout, name = 'dense_' + str(l))
+            if n.replace and last_layer:
+                return output, tf.gradients(output, weights)[0], tf.gradients(output, biases)[0]
+            else:
+                return output
         else:
-            return tf.nn.dropout(n.activation(dense), dropout, name = 'dense_' + str(l))
+            output = tf.nn.dropout(n.activation(dense), dropout, name = 'dense_' + str(l))
+            if n.replace and last_layer:
+                return output, tf.gradients(output, weights)[0], tf.gradients(output, biases)[0]
 
     def conv(n, input_tensor, l, dropout):
         # CONVOLUTIONAL LAYER
@@ -351,8 +357,10 @@ class IMNN():
         for l in range(1, len(n.layers)):
             if l < len(n.layers) - 1:
                 drop_val = dropout
+                last_layer = False
             else:
                 drop_val = 1.
+                last_layer = True
             if type(n.layers[l]) == list:
                 if len(layer[-1].get_shape().as_list()) < 2:
                     layer.append(tf.reshape(layer[-1], (-1, layer[-1].get_shape().as_list()[-1], 1)))
@@ -362,9 +370,17 @@ class IMNN():
                 if len(layer[-1].get_shape()) > 2:
                     layer.append(tf.reshape(layer[-1], (-1, np.prod(layer[-1].get_shape().as_list()[1:]))))
                 with tf.variable_scope('layer_' + str(l)):
-                    layer.append(n.dense(layer[-1], l, drop_val))
+                    dense_out = n.dense(layer[-1], l, drop_val, last_layer)
+                    if type(dense_out) == tuple and n.replace:
+                        last_layer_w_gradient = dense_out[1]
+                        last_layer_b_gradient = dense_out[2]
+                        dense_out = dense_out[0]
+                    layer.append(dense_out)
             if n.verbose: print(layer[-1])
-        return layer[-1]
+        if n.replace:
+            return layer[-1], last_layer_w_gradient, last_layer_b_gradient
+        else:
+            return layer[-1]
 
     def inverse_covariance(n, a):
         # CALCULATE THE INVERSE COVARIANCE, MEAN AND COVARIANCE
@@ -645,28 +661,47 @@ class IMNN():
             network = n.build_network
         utils.utils().to_prebuild(network)
         with tf.variable_scope("IMNN") as scope:
-            output = network(n.x, n.dropout)
+            if n.replace:
+                output, _, _ = network(n.x, n.dropout)
+            else:
+                output = network(n.x, n.dropout)
         n.output = tf.identity(output, name = "output")
         if n.verbose: print(n.output)
         with tf.variable_scope("IMNN") as scope:
-            scope.reuse_variables()
-            output_central = network(central_input, n.dropout)
-            scope.reuse_variables()
-            output_m = network(derivative_input_m, n.dropout)
-            scope.reuse_variables()
-            output_p = network(derivative_input_p, n.dropout)
+            if n.replace:
+                scope.reuse_variables()
+                output_central, n.last_layer_w_gradient, n.last_layer_b_gradient = network(central_input, n.dropout)
+                scope.reuse_variables()
+                n.output_m, _, _ = network(derivative_input_m, n.dropout)
+                scope.reuse_variables()
+                n.output_p, _, _ = network(derivative_input_p, n.dropout)
+            else:
+                scope.reuse_variables()
+                output_central = network(central_input, n.dropout)
+                scope.reuse_variables()
+                n.output_m = network(derivative_input_m, n.dropout)
+                scope.reuse_variables()
+                n.output_p = network(derivative_input_p, n.dropout)
             if n.preload_data is not None and test_input is not None:
-                scope.reuse_variables()
-                test_output_central = network(test_input, 1.)
-                scope.reuse_variables()
-                test_output_m = network(test_derivative_input_m, 1.)
-                scope.reuse_variables()
-                test_output_p = network(test_derivative_input_p, 1.)
+                if n.replace:
+                    scope.reuse_variables()
+                    test_output_central, _, _ = network(test_input, 1.)
+                    scope.reuse_variables()
+                    test_output_m, _, _ = network(test_derivative_input_m, 1.)
+                    scope.reuse_variables()
+                    test_output_p, _, _ = network(test_derivative_input_p, 1.)
+                else:
+                    scope.reuse_variables()
+                    test_output_central = network(test_input, 1.)
+                    scope.reuse_variables()
+                    test_output_m = network(test_derivative_input_m, 1.)
+                    scope.reuse_variables()
+                    test_output_p = network(test_derivative_input_p, 1.)
             else:
                 test_output_central = output_central
-                test_output_m = output_m
-                test_output_p = output_p
-        F, iC, μ, dμdθ, C = n.Fisher(output_central, output_m, output_p)
+                test_output_m = n.output_m
+                test_output_p = n.output_p
+        F, iC, μ, dμdθ, C = n.Fisher(output_central, n.output_m, n.output_p)
         n.F = tf.identity(F, name = 'fisher_information')
         if n.verbose: print(n.F)
         n.iC = tf.identity(iC, name = 'inverse_covariance')
@@ -707,9 +742,18 @@ class IMNN():
         # backpropagate               n tf opt    - minimisation scheme for the network
         #______________________________________________________________
         η = utils.utils().isfloat(η, key = 'η')
-        n.backpropagate = tf.train.AdamOptimizer(η).minimize(n.Λ)
+        n.opt = tf.train.AdamOptimizer(η)
+        n.grads = n.opt.compute_gradients(n.Λ)
+        if n.replace:
+            n.new_grad = tf.placeholder(dtype = n._FLOATX, shape = (), name = "new_grad")
+            print(n.last_layer_b_gradient)
+            print(n.last_layer_w_gradient)
+            n.grads[-1] = (n.new_grad * n.last_layer_b_gradient, n.grads[-1][-1])
+            n.grads[-2] = (n.new_grad * n.last_layer_w_gradient, n.grads[-2][-1])
+        n.backpropagate = n.opt.apply_gradients(n.grads)
+        #n.backpropagate = tf.train.AdamOptimizer(η).minimize(n.Λ)
 
-    def train(n, num_epochs, n_train, keep_rate, history = True, data = None, to_continue = False):
+    def train(n, num_epochs, n_train, keep_rate, history = True, data = None, to_continue = False, dd = None):
         # TRAIN INFORMATION MAXIMISING NEURAL NETWORK
         #______________________________________________________________
         # RETURNS
@@ -788,20 +832,43 @@ class IMNN():
             else:
                 test = False
 
+        batches = n_train
+                
         central_indices = np.arange(n.n_s * n_train)
         derivative_indices = np.arange(n.n_p * n_train)
+        
+        n_train = 1
         tq = tqdm.trange(num_epochs)
         for epoch in tq:
             np.random.shuffle(central_indices)
             np.random.shuffle(derivative_indices)
             if n.x_central.op.type != 'Placeholder':
                 for combination in range(n_train):
-                    n.sess.run(n.backpropagate, feed_dict = {n.central_indices: central_indices[combination * n.n_s: (combination + 1) * n.n_s].reshape((n.n_s, 1)), n.derivative_indices: derivative_indices[combination * n.n_p: (combination + 1) * n.n_p].reshape((n.n_p, 1)), n.dropout: keep_rate})
+                        n.sess.run(n.backpropagate, feed_dict = {n.central_indices: central_indices[combination * n.n_s: (combination + 1) * n.n_s].reshape((n.n_s, 1)), n.derivative_indices: derivative_indices[combination * n.n_p: (combination + 1) * n.n_p].reshape((n.n_p, 1)), n.dropout: keep_rate})
                 train_F = n.sess.run(n.F, feed_dict = {n.central_indices: central_indices[combination * n.n_s: (combination + 1) * n.n_s].reshape((n.n_s, 1)), n.derivative_indices: derivative_indices[combination * n.n_p: (combination + 1) * n.n_p].reshape((n.n_p, 1)), n.dropout: 1.})
                 det_train_F = np.linalg.det(train_F)
             else:
                 for combination in range(n_train):
-                    n.sess.run(n.backpropagate, feed_dict = {n.x_central: data['x_central'][central_indices[combination * n.n_s: (combination + 1) * n.n_s]], n.x_m: data['x_m'][derivative_indices[combination * n.n_p: (combination + 1) * n.n_p]], n.x_p: data['x_p'][derivative_indices[combination * n.n_p: (combination + 1) * n.n_p]], n.dropout: keep_rate})
+                    if n.replace:
+                        x = np.zeros([batches * n.n_s, n.n_summaries])
+                        x_m = np.zeros([batches * n.n_p, n.n_summaries])
+                        x_p = np.zeros([batches * n.n_p, n.n_summaries])
+                        for i in range(batches):
+                            x[i * n.n_s: (i+1) * n.n_s] = n.sess.run(n.output, feed_dict = {n.x: data['x_central'][central_indices[i * n.n_s: (i+1) * n.n_s]], n.dropout: 1.})
+                            x_m[i * n.n_p: (i+1) * n.n_p] = n.sess.run(n.output_m, feed_dict = {n.x_m: data['x_m'][derivative_indices[i * n.n_p: (i+1) * n.n_p]], n.dropout: 1.})
+                            x_p[i * n.n_p: (i+1) * n.n_p] = n.sess.run(n.output_p, feed_dict = {n.x_p: data['x_p'][derivative_indices[i * n.n_p: (i+1) * n.n_p]], n.dropout: 1.})
+                        C = np.cov(x, rowvar = False)
+                        if n.n_summaries == 1:
+                            C = C[np.newaxis, np.newaxis]
+                        Cinv = np.linalg.inv(C)
+                        dμdθ = np.mean(np.array([[(x_p[:, i] - x_m[:, i]) * dd[j] for i in range(n.n_summaries)] for j in range(n.n_params)]), -1)
+                        F = np.einsum("ij,kj->ik", dμdθ, np.einsum("ij,kj->ki", Cinv, dμdθ))
+                        F = 0.5 * (F + np.transpose(F))
+                        F = np.linalg.det(F)
+                        for i in range(batches):
+                            n.sess.run(n.backpropagate, feed_dict = {n.x_central: data['x_central'][central_indices[i * n.n_s: (i + 1) * n.n_s]], n.x_m: data['x_m'][derivative_indices[i * n.n_p: (i + 1) * n.n_p]], n.x_p: data['x_p'][derivative_indices[i * n.n_p: (i + 1) * n.n_p]], n.dropout: keep_rate, n.new_grad: F})
+                    else:
+                        n.sess.run(n.backpropagate, feed_dict = {n.x_central: data['x_central'][central_indices[combination * n.n_s: (combination + 1) * n.n_s]], n.x_m: data['x_m'][derivative_indices[combination * n.n_p: (combination + 1) * n.n_p]], n.x_p: data['x_p'][derivative_indices[combination * n.n_p: (combination + 1) * n.n_p]], n.dropout: keep_rate})
                 train_F = n.sess.run(n.F, feed_dict = {n.x_central: data['x_central'][central_indices[combination * n.n_s: (combination + 1) * n.n_s]], n.x_m: data['x_m'][derivative_indices[combination * n.n_p: (combination + 1) * n.n_p]], n.x_p: data['x_p'][derivative_indices[combination * n.n_p: (combination + 1) * n.n_p]], n.dropout: 1.})
                 det_train_F = np.linalg.det(train_F)
             n.history["F"].append(train_F)
